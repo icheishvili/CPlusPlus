@@ -1,7 +1,7 @@
 CC=g++
-CCFLAGS=-c -Wall -Wextra -ansi -O3
+CCFLAGS=-c -Wall -Wextra -ansi -O3 -ffast-math -I mongoose/
 LD=g++
-LDFLAGS=
+LDFLAGS=-Lmongoose/ -lmongoose
 
 all: main.o
 	$(LD) $(LDFLAGS) main.o -o ab3

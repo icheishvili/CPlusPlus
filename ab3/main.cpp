@@ -6,6 +6,7 @@
 #include <vector>
 #include <sstream>
 #include <algorithm>
+#include "mongoose.h"
 
 class Node {
 private:
@@ -182,24 +183,18 @@ std::vector<std::pair<std::string, unsigned short> > recommend(Graph* g, std::st
 
     std::map<std::string, unsigned short> counts;
     std::vector<Node*>* charts = node->getNeighbors();
-    std::vector<Node*>::const_iterator chartsIt = charts->begin();
     std::vector<Node*>* tracks;
-    std::vector<Node*>::const_iterator tracksIt;
     std::map<std::string, unsigned short>::const_iterator countsIt;
     std::string relatedId;
-    while (chartsIt != charts->end()) {
-        tracks = (*chartsIt)->getNeighbors();
-        tracksIt = tracks->begin();
-        while (tracksIt != tracks->end()) {
-            relatedId = (*tracksIt)->getId();
+    for (size_t i = 0; i < charts->size(); i++) {
+        tracks = charts->at(i)->getNeighbors();
+        for (size_t j = 0; j < tracks->size(); j++) {
+            relatedId = tracks->at(j)->getId();
             if (relatedId == nodeId) {
-                ++tracksIt;
                 continue;
             }
             ++counts[relatedId];
-            ++tracksIt;
         }
-        ++chartsIt;
     }
 
     countsIt = counts.begin();
@@ -213,24 +208,74 @@ std::vector<std::pair<std::string, unsigned short> > recommend(Graph* g, std::st
     return scoreList;
 }
 
+static Graph* graph;
+
+std::vector<std::pair<std::string, std::string> > parse_qs(char* raw_query_string) {
+    std::vector<std::pair<std::string, std::string> > parsed;
+    if (!raw_query_string) {
+        return parsed;
+    }
+    std::string query_string = raw_query_string;
+    std::vector<std::string> params = tokenize(query_string, "&");
+    std::vector<std::string> parts;
+    std::string name;
+    std::string value;
+    for (size_t i = 0; i < params.size(); i++) {
+        parts = tokenize(params.at(i), "=");
+        name = parts.at(0);
+        if (parts.size() > 1) {
+            value = parts.at(1);
+        } else {
+            value = "";
+        }
+        parsed.push_back(std::make_pair(name, value));
+    }
+    return parsed;
+}
+
+std::string get_param_value(std::vector<std::pair<std::string, std::string> > params, std::string name, std::string default_value) {
+    std::pair<std::string, std::string> param;
+    for (size_t i = 0; i < params.size(); i++) {
+        param = params.at(i);
+        if (param.first == name) {
+            return param.second;
+        }
+    }
+    return default_value;
+}
+
+static void* http_callback(enum mg_event event, struct mg_connection* conn, const struct mg_request_info* request_info) {
+    if (event == MG_NEW_REQUEST) {
+        std::vector<std::pair<std::string, std::string> > params = parse_qs(request_info->query_string);
+        std::string trackId = std::string("track-") + get_param_value(params, "trackId", "0");
+        size_t limit = atoi(get_param_value(params, "limit", "24").c_str());
+        std::vector<std::pair<std::string, unsigned short> > scoreList = recommend(graph, trackId);
+        std::string linkTrackId;
+        mg_printf(conn, "HTTP/1.1 200 OK\r\n");
+        mg_printf(conn, "Content-Type: text/html\r\n\r\n");
+        for (size_t i = 0; i < scoreList.size() && i < limit; i++) {
+            linkTrackId = tokenize(scoreList.at(i).first, "-").at(1);
+            mg_printf(conn, "%s,%d &nbsp;&nbsp;<a href=\"http://www.beatport.com/track/_/%s\">=></a><br/>\n", scoreList.at(i).first.c_str(), scoreList.at(i).second, linkTrackId.c_str());
+        }
+        return const_cast<char*>("");
+    } else {
+        return NULL;
+    }
+}
+
 int main(int argc, char** argv) {
-    Graph* g = new Graph();
+    graph = new Graph();
 
     for (unsigned short i = 1; i < argc; i++) {
-        populateGraph(argv[i], g);
-    }
-    std::vector<std::pair<std::string, unsigned short> > scoreList = recommend(g, "track-696969");
-    std::vector<std::pair<std::string, unsigned short> >::const_iterator scoreListIt = scoreList.begin();
-    while (scoreListIt != scoreList.end()) {
-        std::cout << scoreListIt->first << " => " << scoreListIt->second << "\n";
-        ++scoreListIt;
+        populateGraph(argv[i], graph);
     }
 
-    std::cout << system("date") << std::endl;
-    for (unsigned int i = 0; i < 10000; i++) {
-        std::vector<std::pair<std::string, unsigned short> > scoreList = recommend(g, "track-696969");
-    }
-    std::cout << system("date") << std::endl;
+    struct mg_context *ctx;
+    const char *options[] = {"listening_ports", "8080", NULL};
 
-    delete g;
+    ctx = mg_start(&http_callback, NULL, options);
+    getchar();
+    mg_stop(ctx);
+
+    delete graph;
 }
