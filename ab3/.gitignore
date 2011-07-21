@@ -1,2 +1,4 @@
 *.o
 ab3
+*.csv
+mongoose
