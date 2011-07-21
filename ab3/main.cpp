@@ -244,23 +244,74 @@ std::string get_param_value(std::vector<std::pair<std::string, std::string> > pa
     return default_value;
 }
 
-static void* http_callback(enum mg_event event, struct mg_connection* conn, const struct mg_request_info* request_info) {
-    if (event == MG_NEW_REQUEST) {
-        std::vector<std::pair<std::string, std::string> > params = parse_qs(request_info->query_string);
-        std::string trackId = std::string("track-") + get_param_value(params, "trackId", "0");
-        size_t limit = atoi(get_param_value(params, "limit", "24").c_str());
+class BaseHandler {
+protected:
+    mg_event mEvent;
+    mg_connection* mConnection;
+    mg_request_info* mRequest;
+    std::vector<std::pair<std::string, std::string> > mParams;
+    std::string getParamValue(std::string, std::string);
+public:
+    BaseHandler(mg_event, mg_connection*, mg_request_info*);
+    virtual ~BaseHandler();
+    virtual void* handle();
+};
+
+BaseHandler::BaseHandler(mg_event event, mg_connection* conn, mg_request_info* request) {
+    mEvent = event;
+    mConnection = conn;
+    mRequest = request;
+    mParams = parse_qs(mRequest->query_string);
+}
+
+BaseHandler::~BaseHandler() {
+}
+
+std::string BaseHandler::getParamValue(std::string name, std::string default_value) {
+    return get_param_value(mParams, name, default_value);
+}
+
+void* BaseHandler::handle() {
+    return NULL;
+}
+
+class RecommendationHandler : public BaseHandler {
+public:
+    RecommendationHandler(mg_event, mg_connection*, mg_request_info*);
+    virtual ~RecommendationHandler();
+    virtual void* handle();
+};
+
+RecommendationHandler::RecommendationHandler(mg_event event, mg_connection* conn, mg_request_info* request) : BaseHandler(event, conn, request) {
+}
+
+RecommendationHandler::~RecommendationHandler() {
+}
+
+void* RecommendationHandler::handle() {
+    BaseHandler::handle();
+    if (mEvent == MG_NEW_REQUEST) {
+        std::string trackId = std::string("track-") + getParamValue("trackId", "0");
+        size_t limit = atoi(getParamValue("limit", "24").c_str());
         std::vector<std::pair<std::string, unsigned short> > scoreList = recommend(graph, trackId);
         std::string linkTrackId;
-        mg_printf(conn, "HTTP/1.1 200 OK\r\n");
-        mg_printf(conn, "Content-Type: text/html\r\n\r\n");
+        mg_printf(mConnection, "HTTP/1.1 200 OK\r\n");
+        mg_printf(mConnection, "Content-Type: text/html\r\n\r\n");
         for (size_t i = 0; i < scoreList.size() && i < limit; i++) {
             linkTrackId = tokenize(scoreList.at(i).first, "-").at(1);
-            mg_printf(conn, "%s,%d &nbsp;&nbsp;<a href=\"http://www.beatport.com/track/_/%s\">=></a><br/>\n", scoreList.at(i).first.c_str(), scoreList.at(i).second, linkTrackId.c_str());
+            mg_printf(mConnection, "%s,%d &nbsp;&nbsp;<a href=\"http://www.beatport.com/track/_/%s\">=></a><br/>\n", scoreList.at(i).first.c_str(), scoreList.at(i).second, linkTrackId.c_str());
         }
         return const_cast<char*>("");
     } else {
         return NULL;
     }
+}
+
+static void* http_callback(mg_event event, mg_connection* conn, const mg_request_info* request_info) {
+    if (std::string(request_info->uri) == "/similar-tracks/" || std::string(request_info->uri) == "/similar-tracks") {
+        return RecommendationHandler(event, conn, const_cast<mg_request_info*>(request_info)).handle();
+    }
+    return NULL;
 }
 
 int main(int argc, char** argv) {
